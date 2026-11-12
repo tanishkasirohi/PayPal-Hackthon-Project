@@ -20,11 +20,13 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import agent
+
 ROOT = Path(__file__).resolve().parent.parent
-DB_PATH = Path(os.getenv("DATABASE_PATH", ROOT / "data" / "procura.db"))
+DB_PATH = Path(os.getenv("DATABASE_PATH", ROOT / "data" / "cartgenii.db"))
 STATIC = ROOT / "frontend"
-CURRENCY = os.getenv("PROCURA_CURRENCY", "USD").upper()
-app = FastAPI(title="Procura AI", version="1.0.0", description="AI-assisted procurement with PayPal Sandbox checkout")
+CURRENCY = os.getenv("APP_CURRENCY", "USD").upper()
+app = FastAPI(title="CartGenii", version="1.0.0", description="AI-assisted procurement with PayPal Sandbox checkout")
 app.add_middleware(CORSMiddleware, allow_origins=[os.getenv("FRONTEND_ORIGIN", "*")], allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 app.mount("/assets", StaticFiles(directory=STATIC), name="assets")
 
@@ -41,6 +43,21 @@ SEED = [
     ("pen-gel-black", "Black Gel Pen (Pack of 10)", "Stationery", "Smooth-writing black gel pens for office and school.", {"colour": "black", "pack_size": 10, "type": "gel"}, "Paper & Pine", 550, 700, 10),
     ("headphones-wireless", "Horizon Wireless Headphones", "Electronics", "Comfortable over-ear wireless headphones with noise reduction.", {"type": "wireless", "noise_cancelling": True}, "Pixel Depot", 12900, 40, 1),
     ("monitor-27", "Viewpoint 27-inch Monitor", "Electronics", "QHD monitor with an adjustable stand for home offices.", {"display_in": 27, "resolution": "QHD"}, "Northstar Supply", 22900, 14, 1),
+    ("laptop-air-14-pd", "Aster Air 14 Laptop", "Electronics", "Lightweight laptop for coding, study and everyday work.", {"ram_gb": 16, "storage_gb": 512, "display_in": 14, "use": "programming"}, "Pixel Depot", 81500, 30, 1),
+    ("laptop-flex-13", "Lumen Flex 13 Laptop", "Electronics", "Ultra-portable 13-inch laptop with long battery life; 8 GB memory.", {"ram_gb": 8, "storage_gb": 512, "display_in": 13, "use": "everyday"}, "Northstar Supply", 54900, 22, 1),
+    ("laptop-dev-14", "Kepler Dev 14 Laptop", "Electronics", "Developer laptop with 32 GB memory and a sharp 14-inch display.", {"ram_gb": 32, "storage_gb": 512, "display_in": 14, "use": "programming"}, "Circuit Hub", 94900, 9, 1),
+    ("laptop-value-15", "Nova Value 15 Laptop", "Electronics", "Budget 15-inch laptop for study and office work.", {"ram_gb": 8, "storage_gb": 256, "display_in": 15, "use": "everyday"}, "Circuit Hub", 44900, 35, 1),
+    ("laptop-core-14-ch", "Nova Core 14 Laptop", "Electronics", "Balanced 14-inch machine with ample memory for development.", {"ram_gb": 16, "storage_gb": 512, "display_in": 14, "use": "programming"}, "Circuit Hub", 84500, 4, 1),
+    ("shirt-black-cotton-bm", "Everyday Cotton T-Shirt", "Apparel", "Soft black 100% cotton crew-neck T-shirt. Sizes S to XL.", {"colour": "black", "material": "cotton", "sizes": ["S", "M", "L", "XL"]}, "Bulk Merch Direct", 399, 150, 50),
+    ("shirt-black-heavy", "Heavyweight Cotton T-Shirt", "Apparel", "Premium 220 gsm black cotton tee for uniforms. Sizes S to XXL.", {"colour": "black", "material": "cotton", "sizes": ["S", "M", "L", "XL", "XXL"]}, "Bulk Merch Direct", 610, 900, 50),
+    ("shirt-navy-cotton", "Everyday Cotton T-Shirt — Navy", "Apparel", "Navy 100% cotton crew-neck T-shirt. Sizes S to XL.", {"colour": "navy", "material": "cotton", "sizes": ["S", "M", "L", "XL"]}, "Threadline Wholesale", 430, 400, 25),
+    ("shirt-black-polo", "Cotton Polo Shirt", "Apparel", "Black cotton pique polo for staff uniforms. Sizes S to XL.", {"colour": "black", "material": "cotton", "sizes": ["S", "M", "L", "XL"]}, "Green Stitch Co.", 899, 200, 20),
+    ("notebook-a5-office", "A5 Hardcover Notebook", "Stationery", "Ruled 192-page hardcover notebook for office teams.", {"size": "A5", "pages": 192, "material": "paper"}, "Office Point", 410, 1200, 20),
+    ("notebook-a4-spiral", "A4 Spiral Notebook", "Stationery", "Ruled 120-page spiral notebook.", {"size": "A4", "pages": 120, "material": "paper"}, "Office Point", 290, 600, 25),
+    ("pen-gel-black-op", "Black Gel Pen (Pack of 10)", "Stationery", "Smooth-writing black gel pens for office and school.", {"colour": "black", "pack_size": 10, "type": "gel"}, "Office Point", 499, 300, 20),
+    ("pen-ball-blue", "Blue Ballpoint Pen (Pack of 20)", "Stationery", "Everyday blue ballpoint pens in a bulk pack.", {"colour": "blue", "pack_size": 20, "type": "ballpoint"}, "Paper & Pine", 380, 800, 10),
+    ("headphones-studio", "Horizon Studio Headphones", "Electronics", "Wired studio headphones with a flat, accurate sound.", {"type": "wired", "noise_cancelling": False}, "Circuit Hub", 8900, 25, 1),
+    ("monitor-24", "Viewpoint 24-inch Monitor", "Electronics", "Full-HD 24-inch monitor for everyday work.", {"display_in": 24, "resolution": "FHD"}, "Circuit Hub", 13900, 30, 1),
 ]
 
 @contextmanager
@@ -61,8 +78,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS orders(id TEXT PRIMARY KEY, mode TEXT NOT NULL, status TEXT NOT NULL, currency TEXT NOT NULL, total_cents INTEGER NOT NULL, paypal_order_id TEXT, created_at TEXT NOT NULL, items TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS payments(id TEXT PRIMARY KEY, order_id TEXT NOT NULL, paypal_order_id TEXT, status TEXT NOT NULL, amount_cents INTEGER NOT NULL, currency TEXT NOT NULL, created_at TEXT NOT NULL, captured_at TEXT);
         """)
-        if c.execute("SELECT COUNT(*) FROM listings").fetchone()[0] == 0:
-            c.executemany("INSERT INTO listings VALUES(?,?,?,?,?,?,?,?,?,?)", [(i,n,cat,d,json.dumps(a),s,p,stock,m,CURRENCY) for i,n,cat,d,a,s,p,stock,m in SEED])
+        # INSERT OR IGNORE keeps existing rows (and demo stock) but adds any new seed listings.
+        if True:
+            c.executemany("INSERT OR IGNORE INTO listings VALUES(?,?,?,?,?,?,?,?,?,?)", [(i,n,cat,d,json.dumps(a),s,p,stock,m,CURRENCY) for i,n,cat,d,a,s,p,stock,m in SEED])
 init_db()
 
 def row_item(r):
@@ -74,7 +92,7 @@ def paypal_configured():
     return bool(client_id and secret and not client_id.lower().startswith("your_") and not secret.lower().startswith("your_"))
 
 def ai_configured():
-    return bool(os.getenv("LLM_API_KEY"))
+    return agent.llm_configured()
 
 def dollars_to_cents(value) -> int:
     try: return int((Decimal(str(value)) * 100).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
@@ -116,28 +134,6 @@ def heuristic_parse(mode: str, message: str):
     budget = float(budget_match.group(1).replace(",", "")) if budget_match else None
     return {"mode": mode, "category": category, "product_query": query, "quantity": qty, "budget": budget, "currency": CURRENCY, "specifications": specs}
 
-def llm_parse(mode, message):
-    key = os.getenv("LLM_API_KEY")
-    if not key: return None
-    base = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
-    prompt = ("Extract a procurement request as JSON with keys category, product_query, quantity, budget, currency, specifications. "
-              "Use null for unknown budget; quantity defaults to 1 for individual and 1 for business if omitted. "
-              "Never invent listing IDs, prices, stock, or availability. User request: " + message)
-    payload = json.dumps({"model": model, "messages": [{"role":"system","content":prompt}], "response_format":{"type":"json_object"}, "temperature":0}).encode()
-    req = urllib.request.Request(base + "/chat/completions", data=payload, headers={"Authorization":"Bearer " + key,"Content-Type":"application/json"})
-    try:
-        with urllib.request.urlopen(req, timeout=18) as response: body=json.loads(response.read())
-        result=json.loads(body["choices"][0]["message"]["content"])
-        if not isinstance(result, dict): return None
-        result.update({"mode":mode,"currency":CURRENCY})
-        result["quantity"] = max(1, min(10000, int(result.get("quantity") or 1)))
-        result["budget"] = float(result["budget"]) if result.get("budget") is not None else None
-        result["specifications"] = result.get("specifications") if isinstance(result.get("specifications"), dict) else {}
-        return result
-    except Exception:
-        return None
-
 def matches(req, item):
     cat = (req.get("category") or "").lower()
     if cat and cat not in item["category"].lower() and not (cat == "apparel" and item["category"] == "Apparel"): return False
@@ -154,7 +150,7 @@ def matches(req, item):
         elif str(v).lower() not in str(av).lower(): return False
     qty = int(req.get("quantity") or 1)
     if item["stock"] < qty or item["min_qty"] > qty: return False
-    if req.get("budget") is not None and int(float(item["unit_price"])*100)*qty > dollars_to_cents(req["budget"]): return False
+    if req.get("budget") is not None and dollars_to_cents(item["unit_price"])*qty > dollars_to_cents(req["budget"]): return False
     return True
 
 def search_for(req):
@@ -172,7 +168,7 @@ def search_for(req):
 def home(): return FileResponse(STATIC / "index.html")
 
 @app.get("/api/health")
-def health(): return {"status":"ok","app":"Procura AI","ai_configured":ai_configured(),"ai_provider":"LLM" if ai_configured() else "demo parser","paypal_configured":paypal_configured(),"client_id":os.getenv("PAYPAL_CLIENT_ID") if paypal_configured() else None,"currency":CURRENCY}
+def health(): return {"status":"ok","app":"CartGenii","ai_configured":ai_configured(),"ai_provider":agent.llm_label(),"paypal_configured":paypal_configured(),"client_id":os.getenv("PAYPAL_CLIENT_ID") if paypal_configured() else None,"currency":CURRENCY}
 
 @app.get("/api/products")
 def products(category: str | None = None, q: str | None = None):
@@ -181,12 +177,12 @@ def products(category: str | None = None, q: str | None = None):
 
 @app.post("/api/procurement/parse")
 def parse_request(body: ParseRequest):
-    parsed=llm_parse(body.mode, body.message)
-    req=parsed or heuristic_parse(body.mode, body.message)
+    result=agent.run(body.mode, body.message, heuristic_parse, search_for)
+    req=result["requirements"]
     if req.get("budget") is not None and float(req["budget"]) < 0: raise HTTPException(422,"Budget cannot be negative")
-    req["source"]="AI model" if parsed else "demo parser"
-    options=search_for(req)
-    return {"requirements":req,"recommendations":options,"ai_mode":req["source"],"message":recommendation_message(req, options)}
+    advice=result.get("advice") or {}
+    message=result.get("question") if result.get("needs_clarification") else (advice.get("summary") or recommendation_message(req, result["recommendations"]))
+    return {**result,"ai_mode":req.get("source"),"ai_model":agent.llm_label(),"message":message}
 
 def recommendation_message(req, options):
     if options:
@@ -244,7 +240,7 @@ def create_paypal_order(body: PayRequest):
     if not order: raise HTTPException(404,"Order not found")
     if order["status"] == "paid": raise HTTPException(409,"This order is already paid")
     token=paypal_token(); amount=f"{order['total_cents']/100:.2f}"
-    result=paypal_request("/v2/checkout/orders",json.dumps({"intent":"CAPTURE","purchase_units":[{"reference_id":order["id"],"custom_id":order["id"],"amount":{"currency_code":order["currency"],"value":amount}}],"application_context":{"brand_name":"Procura AI","user_action":"PAY_NOW"}}).encode(),token)
+    result=paypal_request("/v2/checkout/orders",json.dumps({"intent":"CAPTURE","purchase_units":[{"reference_id":order["id"],"custom_id":order["id"],"amount":{"currency_code":order["currency"],"value":amount}}],"application_context":{"brand_name":"CartGenii","user_action":"PAY_NOW"}}).encode(),token)
     pid=result["id"]
     with db() as c:
         c.execute("UPDATE orders SET status='pending_payment',paypal_order_id=? WHERE id=?",(pid,order["id"]))
@@ -256,7 +252,7 @@ def capture_paypal_order(body: CaptureRequest):
     with db() as c: order=c.execute("SELECT * FROM orders WHERE id=?",(body.order_id,)).fetchone()
     if not order: raise HTTPException(404,"Order not found")
     if order["status"] == "paid": return {"status":"paid","order_id":body.order_id,"message":"Payment was already verified."}
-    if order["paypal_order_id"] != body.paypal_order_id: raise HTTPException(400,"PayPal order does not match this Procura order")
+    if order["paypal_order_id"] != body.paypal_order_id: raise HTTPException(400,"PayPal order does not match this CartGenii order")
     token=paypal_token(); result=paypal_request(f"/v2/checkout/orders/{urllib.parse.quote(body.paypal_order_id)}/capture",b"{}",token)
     unit=(result.get("purchase_units") or [{}])[0]
     capture=(unit.get("payments",{}).get("captures") or [{}])[0]

@@ -35,30 +35,50 @@ document.querySelectorAll('.mode').forEach(b=>b.addEventListener('click',()=>{
   document.querySelectorAll('.mode').forEach(x=>x.classList.remove('active')); b.classList.add('active'); state.mode=b.dataset.mode;
   $('#request').placeholder=state.mode==='individual'?'e.g. A laptop for programming under $900, at least 16 GB RAM and 512 GB storage':'e.g. 100 black cotton T-shirts in sizes S to XL, within a $500 total budget';
 }));
-document.querySelectorAll('.prompt-chips button').forEach(b=>b.addEventListener('click',()=>{$('#request').value=b.dataset.prompt; if(b.dataset.prompt.includes('100 black')) document.querySelector('[data-mode="business"]').click(); $('#request').focus()}));
-$('#find-button').addEventListener('click', async()=>{
-  const message=$('#request').value.trim(); if(message.length<3){$('#request').focus();toast('Tell us a little more about what you need.');return}
-  const button=$('#find-button'); button.disabled=true;button.innerHTML='Comparing options <span>…</span>';
+document.querySelectorAll('.prompt-chips button').forEach(b=>b.addEventListener('click',()=>{const m=b.dataset.mode||(b.dataset.prompt.includes('100 black')?'business':'individual'); document.querySelector(`[data-mode="${m}"]`).click(); $('#request').value=b.dataset.prompt; $('#request').focus()}));
+$('#find-button').addEventListener('click',()=>runSearch($('#request').value.trim()));
+async function runSearch(message){
+  if(message.length<3){$('#request').focus();toast('Tell us a little more about what you need.');return}
+  const button=$('#find-button'); button.disabled=true;button.innerHTML='Agent is working <span class="dots">…</span>';
+  $('#result-section').classList.remove('hidden');
+  $('#brief-card').innerHTML='<span class="brief-icon spin">✳</span><div><strong>CartGenii agent is working</strong><p>Understanding your request → searching the catalogue → ranking → explaining the options…</p></div>';
+  $('#product-grid').innerHTML='';$('#alt-section').classList.add('hidden');$('#empty-state').classList.add('hidden');$('#agent-trace').innerHTML='';
   try{
     const result=await api('/api/procurement/parse',{method:'POST',body:JSON.stringify({mode:state.mode,message})});
-    state.request=message;state.requirements=result.requirements;state.recommendations=result.recommendations;state.aiMode=result.ai_mode;
-    renderResults(result); $('#result-section').classList.remove('hidden'); $('#result-section').scrollIntoView({behavior:'smooth',block:'start'});
-  }catch(e){toast(e.message)}finally{button.disabled=false;button.innerHTML='Find options <span>↗</span>'}
-});
+    state.request=message;state.requirements=result.requirements;state.recommendations=result.recommendations;state.alternatives=result.alternatives||[];state.aiMode=result.ai_mode;
+    renderResults(result); $('#result-section').scrollIntoView({behavior:'smooth',block:'start'});
+  }catch(e){toast(e.message);$('#brief-card').innerHTML=`<span class="brief-icon">!</span><div><strong>Something went wrong</strong><p>${esc(e.message)}</p></div>`}finally{button.disabled=false;button.innerHTML='Find options <span>↗</span>'}
+}
+function renderTrace(trace){
+  $('#agent-trace').innerHTML=(trace||[]).map((t,i)=>`<div class="trace-step ${t.actor==='AI model'?'ai':''}"><span class="trace-n">${i+1}</span><div><strong>${esc(t.step)}</strong><small>${esc(t.actor)} · ${esc(t.detail)}</small></div></div>`).join('<span class="trace-arrow">→</span>');
+}
 function renderResults(result){
   const r=result.requirements; $('#result-title').textContent=r.mode==='business'?'Supplier options for your order':'Your best-fit options';
+  renderTrace(result.trace);
+  if(result.needs_clarification){
+    $('#brief-card').innerHTML=`<span class="brief-icon">?</span><div style="flex:1"><strong>${esc(result.question)}</strong><p>CartGenii needs one more detail before it searches.</p><div class="clarify"><input id="clarify-input" placeholder="e.g. 120 units" autocomplete="off"><button id="clarify-send" class="primary-button">Answer ↗</button></div></div><span class="ai-tag">✳ ${esc(result.ai_mode)}</span>`;
+    $('#result-count').textContent='Waiting for your answer';$('#product-grid').innerHTML='';$('#empty-state').classList.add('hidden');$('#alt-section').classList.add('hidden');
+    const send=()=>{const a=$('#clarify-input').value.trim();if(!a)return;const msg=`${state.pendingRequest||result.requirements&&$('#request').value.trim()}. ${a}`;$('#request').value=msg;runSearch(msg)};
+    state.pendingRequest=$('#request').value.trim();
+    $('#clarify-send').onclick=send;$('#clarify-input').addEventListener('keydown',e=>{if(e.key==='Enter')send()});$('#clarify-input').focus();return;
+  }
+  state.pendingRequest=null;
   const specs=Object.entries(r.specifications||{}).map(([k,v])=>`${k.replaceAll('_',' ')}: ${Array.isArray(v)?v.join(', '):v}`);
-  $('#brief-card').innerHTML=`<span class="brief-icon">✳</span><div><strong>${esc(r.product_query||r.category)}${r.quantity>1?` · ${r.quantity} units`:''}${r.budget?` · up to ${money(r.budget,r.currency)}`:''}</strong><p>${esc(result.message)}${specs.length?`<br>${esc(specs.join(' · '))}`:''}</p></div><span class="ai-tag">✳ ${esc(result.ai_mode)}</span>`;
-  $('#result-count').textContent=`${result.recommendations.length} eligible option${result.recommendations.length===1?'':'s'}`;
-  $('#product-grid').innerHTML=result.recommendations.map((p,i)=>productCard(p,i)).join('');
-  $('#empty-state').classList.toggle('hidden',result.recommendations.length>0);
+  const adv=result.advice||{};
+  $('#brief-card').innerHTML=`<span class="brief-icon">✳</span><div><strong>${esc(r.product_query||r.category)}${r.quantity>1?` · ${r.quantity} units`:''}${r.budget?` · up to ${money(r.budget,r.currency)}`:''}</strong><p class="advice">${esc(result.message)}</p>${specs.length?`<p class="spec-line">${esc(specs.join(' · '))}</p>`:''}${adv.tip?`<p class="tip">💡 ${esc(adv.tip)}</p>`:''}</div><span class="ai-tag">✳ ${esc(adv.source==='AI model'?(result.ai_model||'AI model'):result.ai_mode)}</span>`;
+  $('#result-count').textContent=`${result.recommendations.length} option${result.recommendations.length===1?'':'s'} meet every requirement`;
+  $('#product-grid').innerHTML=result.recommendations.map((p,i)=>productCard(p,i,'rec')).join('');
+  const alts=result.alternatives||[];
+  $('#alt-section').classList.toggle('hidden',!alts.length);
+  $('#alt-grid').innerHTML=alts.map((p,i)=>productCard(p,i,'alt')).join('');
+  $('#empty-state').classList.toggle('hidden',result.recommendations.length>0||alts.length>0);
   $('#product-grid').classList.toggle('hidden',result.recommendations.length===0);
-  document.querySelectorAll('.add-button').forEach(b=>b.addEventListener('click',()=>openCart(result.recommendations[Number(b.dataset.index)])));
+  document.querySelectorAll('.add-button').forEach(b=>b.addEventListener('click',()=>openCart((b.dataset.list==='alt'?alts:result.recommendations)[Number(b.dataset.index)])));
 }
-function productCard(p,index){
+function productCard(p,index,list='rec'){
   const attr=Object.entries(p.attributes||{}).filter(([,v])=>typeof v!=='object').slice(0,3).map(([k,v])=>`<span class="spec-pill">${esc(k.replaceAll('_',' '))}: ${esc(v)}</span>`).join('');
   const total=p.line_total?money(p.line_total):money(Number(p.unit_price)*(state.requirements?.quantity||1));
-  return `<article class="product-card"><div class="product-top"><span class="product-category">${esc(p.category)}</span><span class="product-price">${money(p.unit_price)} <small>/ unit</small></span></div><h3>${esc(p.name)}</h3><div class="product-desc">${esc(p.description)}</div><div class="product-specs">${attr}</div><div class="supplier-row"><span>${esc(p.supplier)}</span><span class="stock-ok">● ${Number(p.stock).toLocaleString()} in demo stock</span></div><div class="supplier-row" style="border-top:0;padding-top:7px"><span>Estimated total</span><strong>${total}</strong></div><button class="add-button" data-index="${index}">Add to ${state.mode==='business'?'purchase draft':'cart'} <span style="float:right">＋</span></button></article>`;
+  return `<article class="product-card ${p.recommended?'picked':''}">${p.recommended?'<span class="pick-badge">✳ AI pick</span>':''}${p.relaxation?`<span class="relax-badge">${esc(p.relaxation)}</span>`:''}<div class="product-top"><span class="product-category">${esc(p.category)}</span><span class="product-price">${money(p.unit_price)} <small>/ unit</small></span></div><h3>${esc(p.name)}</h3><div class="product-desc">${esc(p.description)}</div>${p.why?`<div class="why">✓ ${esc(p.why)}</div>`:''}${p.tradeoff?`<div class="tradeoff">⚖ ${esc(p.tradeoff)}</div>`:''}${p.score!=null?`<div class="score">Backend score ${esc(p.score)}/100</div>`:''}<div class="product-specs">${attr}</div><div class="supplier-row"><span>${esc(p.supplier)}</span><span class="stock-ok">● ${Number(p.stock).toLocaleString()} in demo stock</span></div><div class="supplier-row" style="border-top:0;padding-top:7px"><span>Estimated total</span><strong>${total}</strong></div><button class="add-button" data-list="${list}" data-index="${index}">Add to ${state.mode==='business'?'purchase draft':'cart'} <span style="float:right">＋</span></button></article>`;
 }
 function openCart(product){
   state.selected={...product,quantity:Number(state.requirements?.quantity)||1};
@@ -80,14 +100,14 @@ function renderPayPalButtons(){
   const box=$('#paypal-buttons');if(!window.paypal||!$('#approval').checked||!state.selected)return;box.innerHTML='';$('#paypal-start').classList.add('hidden');
   window.paypal.Buttons({style:{layout:'vertical',color:'gold',shape:'rect',label:'paypal',height:44},
     createOrder:async()=>{
-      const order=await createLocalOrder();state.order=order;localStorage.setItem('procura_pending',JSON.stringify(order));
+      const order=await createLocalOrder();state.order=order;localStorage.setItem('cartgenii_pending',JSON.stringify(order));
       const created=await api('/api/payments/create',{method:'POST',body:JSON.stringify({order_id:order.id})});
-      localStorage.setItem('procura_paypal',JSON.stringify({order_id:order.id,paypal_order_id:created.paypal_order_id}));return created.paypal_order_id;
+      localStorage.setItem('cartgenii_paypal',JSON.stringify({order_id:order.id,paypal_order_id:created.paypal_order_id}));return created.paypal_order_id;
     },
     onApprove:async(data)=>{
       $('#pay-status').textContent='Verifying PayPal capture…';
-      const pending=JSON.parse(localStorage.getItem('procura_paypal')||'{}');
-      try{const result=await api('/api/payments/capture',{method:'POST',body:JSON.stringify({order_id:pending.order_id,paypal_order_id:data.orderID})});$('#pay-status').textContent=result.message;localStorage.removeItem('procura_pending');localStorage.removeItem('procura_paypal');state.order=null;await refreshOrdersCount();setTimeout(()=>{closeCart();switchView('orders');toast('PayPal payment verified. Order is paid.')},1100)}catch(e){$('#pay-status').textContent=e.message}
+      const pending=JSON.parse(localStorage.getItem('cartgenii_paypal')||'{}');
+      try{const result=await api('/api/payments/capture',{method:'POST',body:JSON.stringify({order_id:pending.order_id,paypal_order_id:data.orderID})});$('#pay-status').textContent=result.message;localStorage.removeItem('cartgenii_pending');localStorage.removeItem('cartgenii_paypal');state.order=null;await refreshOrdersCount();setTimeout(()=>{closeCart();switchView('orders');toast('PayPal payment verified. Order is paid.')},1100)}catch(e){$('#pay-status').textContent=e.message}
     },
     onCancel:()=>{$('#pay-status').textContent='Checkout cancelled. Your draft is saved and remains unpaid.'},
     onError:()=>{$('#pay-status').textContent='PayPal checkout had a problem. Your draft is still saved.'}

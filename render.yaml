@@ -1,0 +1,29 @@
+# One-click deploy: Render Dashboard -> New -> Blueprint -> pick this repo.
+# FastAPI serves both the API and the frontend, so this is a single free web service.
+services:
+  - type: web
+    name: cartgenii
+    runtime: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: PAYPAL_BASE_URL
+        value: https://api-m.sandbox.paypal.com
+      - key: APP_CURRENCY
+        value: USD
+      - key: DATABASE_PATH
+        value: /tmp/cartgenii.db
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: LLM_API_KEY
+        sync: false
+      - key: LLM_BASE_URL
+        sync: false
+      - key: LLM_MODEL
+        sync: false
