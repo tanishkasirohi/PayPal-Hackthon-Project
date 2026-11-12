@@ -30,8 +30,39 @@ def llm_configured() -> bool:
     return bool(key) and not key.lower().startswith("your_")
 
 
+_MODEL_OVERRIDE = {"name": None, "tried_discovery": False}
+
+
+def _model() -> str:
+    return _MODEL_OVERRIDE["name"] or os.getenv("LLM_MODEL", "gpt-4o-mini").strip()
+
+
 def llm_label() -> str:
-    return os.getenv("LLM_MODEL", "gpt-4o-mini") if llm_configured() else "demo parser"
+    return _model() if llm_configured() else "demo parser"
+
+
+def _discover_model(base: str, headers: dict):
+    """If the configured model name is wrong, ask the provider which models exist and pick a fast chat model."""
+    _MODEL_OVERRIDE["tried_discovery"] = True
+    try:
+        req = urllib.request.Request(base + "/models", headers=headers)
+        with urllib.request.urlopen(req, timeout=15) as res:
+            data = json.loads(res.read())
+        ids = [str(m.get("id", "")).replace("models/", "") for m in data.get("data", [])]
+    except Exception as e:
+        print("LLM model discovery failed", repr(e)[:200])
+        return None
+    bad = ("embed", "image", "tts", "audio", "live", "vision", "lite", "thinking", "learnlm", "aqa", "veo", "imagen", "gemma", "whisper", "guard")
+    wanted = os.getenv("LLM_MODEL", "").lower()
+    candidates = [i for i in ids if not any(b in i.lower() for b in bad)]
+    pref = [i for i in candidates if "flash" in i.lower() or "mini" in i.lower() or "haiku" in i.lower() or "instant" in i.lower()]
+    pool = pref or candidates or ids
+    if not pool:
+        return None
+    pool.sort(key=lambda i: (wanted not in i.lower(), [-int(n) if n.isdigit() else 0 for n in re.findall(r"\d+", i)][:3]))
+    _MODEL_OVERRIDE["name"] = pool[0]
+    print(f"LLM model '{wanted}' not found; using '{pool[0]}' instead. Available: {', '.join(ids[:15])}")
+    return pool[0]
 
 
 def _extract_json(text: str):
@@ -50,19 +81,18 @@ def _extract_json(text: str):
     return None
 
 
-def llm_json(system: str, user: str, timeout: int = 25):
+def llm_json(system: str, user: str, timeout: int = 40):
     """Call the configured chat model and return a parsed JSON object, or None on any failure."""
     if not llm_configured():
         return None
     base = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-    model = os.getenv("LLM_MODEL", "gpt-4o-mini")
     headers = {
         "Authorization": "Bearer " + os.getenv("LLM_API_KEY", "").strip(),
         "Content-Type": "application/json",
         "User-Agent": "CartGenii/1.1",
     }
     body = {
-        "model": model,
+        "model": _model(),
         "temperature": 0.2,
         "messages": [
             {"role": "system", "content": system + "\nRespond with one JSON object only. No markdown."},
@@ -70,7 +100,8 @@ def llm_json(system: str, user: str, timeout: int = 25):
         ],
         "response_format": {"type": "json_object"},
     }
-    for attempt in range(2):
+    for attempt in range(3):
+        body["model"] = _model()
         req = urllib.request.Request(base + "/chat/completions", data=json.dumps(body).encode(), headers=headers)
         try:
             with urllib.request.urlopen(req, timeout=timeout) as res:
@@ -82,10 +113,13 @@ def llm_json(system: str, user: str, timeout: int = 25):
             return parsed if isinstance(parsed, dict) else None
         except urllib.error.HTTPError as e:
             # Some providers reject response_format; retry once without it.
-            if attempt == 0 and e.code in (400, 422):
+            detail = e.read()[:300]
+            if e.code == 404 and not _MODEL_OVERRIDE["tried_discovery"] and _discover_model(base, headers):
+                continue
+            if e.code in (400, 422) and "response_format" in body and b"model" not in detail.lower():
                 body.pop("response_format", None)
                 continue
-            print("LLM HTTP error", e.code, e.read()[:300])
+            print("LLM HTTP error", e.code, detail)
             return None
         except Exception as e:  # timeout, bad JSON, network
             print("LLM error", repr(e)[:300])
@@ -200,7 +234,7 @@ def find_alternatives(req, search):
 
 RANKING_RULES = {
     "individual": "60% price (cheaper scores higher) + 40% spec headroom above your minimums",
-    "business": "70% unit cost (cheaper scores higher) + 30% stock buffer above your quantity",
+    "business": "85% unit cost (cheaper scores higher) + 15% stock buffer above your quantity",
 }
 
 
@@ -216,7 +250,7 @@ def rank(req, options):
         price_score = Decimal(1) if hi == lo else (hi - t) / (hi - lo)
         if req.get("mode") == "business":
             buffer = min(Decimal(o["stock"]) / Decimal(max(qty, 1)), Decimal(3)) / Decimal(3)
-            score = Decimal("0.7") * price_score + Decimal("0.3") * buffer
+            score = Decimal("0.85") * price_score + Decimal("0.15") * buffer
         else:
             headroom = []
             for k, v in specs.items():
