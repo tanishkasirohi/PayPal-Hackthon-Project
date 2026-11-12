@@ -55,8 +55,8 @@ The Client ID is public and used by the PayPal JavaScript SDK. The Secret remain
 
 ## For judges: testing checkout
 
-- Live demo: `<RENDER_URL>`
-- PayPal Sandbox buyer login (test money only): `<SANDBOX_BUYER_EMAIL>` / `<SANDBOX_BUYER_PASSWORD>`
+- Live demo: ``https://cartgenii.onrender.com``
+- PayPal Sandbox buyer login (test money only): `<sb-eld43n53882507@personal.example.com>` / `<c-pw2fF3>`
 - Use **Business → "100 black cotton T-shirts"**, add the AI pick, tick the approval box and pay with the Sandbox buyer. The order then shows as **paid** under Orders.
 
 ## Demo walkthrough
