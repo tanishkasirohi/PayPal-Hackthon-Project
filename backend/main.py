@@ -253,12 +253,29 @@ def capture_paypal_order(body: CaptureRequest):
     if not order: raise HTTPException(404,"Order not found")
     if order["status"] == "paid": return {"status":"paid","order_id":body.order_id,"message":"Payment was already verified."}
     if order["paypal_order_id"] != body.paypal_order_id: raise HTTPException(400,"PayPal order does not match this CartGenii order")
-    token=paypal_token(); result=paypal_request(f"/v2/checkout/orders/{urllib.parse.quote(body.paypal_order_id)}/capture",b"{}",token)
+    token=paypal_token(); oid=urllib.parse.quote(body.paypal_order_id)
+    try:
+        result=paypal_request(f"/v2/checkout/orders/{oid}/capture",b"{}",token)
+    except HTTPException as e:
+        # Already captured (e.g. a retry after a dropped response): read the order back and verify it instead.
+        if "ORDER_ALREADY_CAPTURED" not in str(e.detail): raise
+        result=paypal_request(f"/v2/checkout/orders/{oid}",None,token)
     unit=(result.get("purchase_units") or [{}])[0]
     capture=(unit.get("payments",{}).get("captures") or [{}])[0]
     amount=capture.get("amount",{})
-    valid=(result.get("status")=="COMPLETED" and capture.get("status")=="COMPLETED" and amount.get("currency_code")==order["currency"] and dollars_to_cents(amount.get("value",0))==order["total_cents"] and unit.get("custom_id")==order["id"])
-    if not valid: raise HTTPException(409,"PayPal capture was not verified against the expected order amount and currency")
+    # PayPal returns our custom_id on the capture (and sometimes on the purchase unit); reference_id is the same value.
+    ref=capture.get("custom_id") or unit.get("custom_id") or unit.get("reference_id")
+    checks={
+        "order status COMPLETED": result.get("status")=="COMPLETED",
+        "capture status COMPLETED": capture.get("status")=="COMPLETED",
+        "currency matches": amount.get("currency_code")==order["currency"],
+        "amount matches": dollars_to_cents(amount.get("value",0))==order["total_cents"],
+        "order reference matches": ref==order["id"],
+    }
+    failed=[k for k,v in checks.items() if not v]
+    if failed:
+        print("PayPal capture NOT verified:", failed, "| order:", result.get("status"), "| capture:", capture.get("status"), capture.get("status_details"), "| amount:", amount, "| expected:", order["total_cents"], order["currency"])
+        raise HTTPException(409,"PayPal capture was not verified: "+", ".join(failed))
     now=datetime.now(timezone.utc).isoformat()
     with db() as c:
         c.execute("UPDATE orders SET status='paid' WHERE id=?",(order["id"],))

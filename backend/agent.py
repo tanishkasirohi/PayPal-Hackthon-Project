@@ -30,11 +30,27 @@ def llm_configured() -> bool:
     return bool(key) and not key.lower().startswith("your_")
 
 
-_MODEL_OVERRIDE = {"name": None, "tried_discovery": False}
+_MODEL_OVERRIDE = {"name": None, "tried_discovery": False, "until": 0.0}
+_LLM_COOLDOWN = {"until": 0.0}  # after every model failed, skip the LLM briefly so the page never hangs
 
 
 def _model() -> str:
-    return _MODEL_OVERRIDE["name"] or os.getenv("LLM_MODEL", "gpt-4o-mini").strip()
+    """Primary model: the one that last worked (fallback/discovery) while still fresh, else LLM_MODEL."""
+    if _MODEL_OVERRIDE["name"] and time.time() < _MODEL_OVERRIDE["until"]:
+        return _MODEL_OVERRIDE["name"]
+    return os.getenv("LLM_MODEL", "gpt-4o-mini").strip()
+
+
+def _model_chain(base: str) -> list:
+    """Models to try in order: primary, then LLM_FALLBACK_MODELS (comma separated), de-duplicated."""
+    fallbacks = os.getenv("LLM_FALLBACK_MODELS", "").strip()
+    if not fallbacks and "generativelanguage.googleapis.com" in base:
+        fallbacks = "gemini-3.7-flash,gemini-3.5-flash-lite"
+    chain = []
+    for name in [_model(), os.getenv("LLM_MODEL", "").strip()] + [f.strip() for f in fallbacks.split(",")]:
+        if name and name not in chain:
+            chain.append(name)
+    return chain
 
 
 def llm_label() -> str:
@@ -61,6 +77,7 @@ def _discover_model(base: str, headers: dict):
         return None
     pool.sort(key=lambda i: (wanted not in i.lower(), [-int(n) if n.isdigit() else 0 for n in re.findall(r"\d+", i)][:3]))
     _MODEL_OVERRIDE["name"] = pool[0]
+    _MODEL_OVERRIDE["until"] = time.time() + 600
     print(f"LLM model '{wanted}' not found; using '{pool[0]}' instead. Available: {', '.join(ids[:15])}")
     return pool[0]
 
@@ -81,9 +98,49 @@ def _extract_json(text: str):
     return None
 
 
-def llm_json(system: str, user: str, timeout: int = 40):
-    """Call the configured chat model and return a parsed JSON object, or None on any failure."""
+def _call_once(base: str, headers: dict, body: dict, timeout: float):
+    """One chat call. Returns (status, data): ok | notfound | fatal | next."""
+    req = urllib.request.Request(base + "/chat/completions", data=json.dumps(body).encode(), headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as res:
+            data = json.loads(res.read())
+        content = data["choices"][0]["message"]["content"]
+        if isinstance(content, list):  # some providers return content parts
+            content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
+        parsed = _extract_json(content)
+        if isinstance(parsed, dict):
+            return "ok", parsed
+        print("LLM returned non-JSON content from", body["model"])
+        return "next", None
+    except urllib.error.HTTPError as e:
+        detail = e.read()[:300]
+        # Some providers reject optional parameters; drop them one at a time and retry.
+        if e.code in (400, 422) and "reasoning_effort" in body:
+            print("LLM provider rejected reasoning_effort; retrying without it")
+            body.pop("reasoning_effort", None)
+            return _call_once(base, headers, body, timeout)
+        if e.code in (400, 422) and "response_format" in body and b"model" not in detail.lower():
+            body.pop("response_format", None)
+            return _call_once(base, headers, body, timeout)
+        if e.code == 404:
+            print("LLM HTTP error 404 for", body["model"], detail)
+            return "notfound", None
+        print("LLM HTTP error", e.code, "for", body["model"], detail)
+        return ("fatal" if e.code in (401, 403) else "next"), None  # 429/5xx: try the next model
+    except Exception as e:  # timeout, bad JSON, network
+        print("LLM error for", body["model"], repr(e)[:200])
+        return "next", None
+
+
+def llm_json(system: str, user: str, timeout: int = 45):
+    """Call the chat model, falling back across models; return a parsed JSON object, or None on failure.
+
+    Total wait is capped (timeout + 15s) so a slow or busy provider never freezes the page.
+    """
     if not llm_configured():
+        return None
+    if time.time() < _LLM_COOLDOWN["until"]:
+        print("LLM skipped (cooling down after repeated failures)")
         return None
     base = os.getenv("LLM_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     headers = {
@@ -92,7 +149,7 @@ def llm_json(system: str, user: str, timeout: int = 40):
         "User-Agent": "CartGenii/1.1",
     }
     body = {
-        "model": _model(),
+        "model": "",
         "temperature": 0.2,
         "messages": [
             {"role": "system", "content": system + "\nRespond with one JSON object only. No markdown."},
@@ -100,30 +157,34 @@ def llm_json(system: str, user: str, timeout: int = 40):
         ],
         "response_format": {"type": "json_object"},
     }
-    for attempt in range(3):
-        body["model"] = _model()
-        req = urllib.request.Request(base + "/chat/completions", data=json.dumps(body).encode(), headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as res:
-                data = json.loads(res.read())
-            content = data["choices"][0]["message"]["content"]
-            if isinstance(content, list):  # some providers return content parts
-                content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
-            parsed = _extract_json(content)
-            return parsed if isinstance(parsed, dict) else None
-        except urllib.error.HTTPError as e:
-            # Some providers reject response_format; retry once without it.
-            detail = e.read()[:300]
-            if e.code == 404 and not _MODEL_OVERRIDE["tried_discovery"] and _discover_model(base, headers):
-                continue
-            if e.code in (400, 422) and "response_format" in body and b"model" not in detail.lower():
-                body.pop("response_format", None)
-                continue
-            print("LLM HTTP error", e.code, detail)
-            return None
-        except Exception as e:  # timeout, bad JSON, network
-            print("LLM error", repr(e)[:300])
-            return None
+    effort = os.getenv("LLM_REASONING_EFFORT", "").strip()  # optional: "low" makes Gemini 3.x answer faster
+    if effort:
+        body["reasoning_effort"] = effort
+    chain = _model_chain(base)
+    deadline = time.time() + timeout + 15
+    i = 0
+    while i < len(chain):
+        remaining = deadline - time.time()
+        if remaining < 3:
+            break
+        body["model"] = chain[i]
+        status, data = _call_once(base, headers, body, min(timeout, remaining))
+        if status == "ok":
+            if chain[i] != os.getenv("LLM_MODEL", "").strip():
+                _MODEL_OVERRIDE["name"], _MODEL_OVERRIDE["until"] = chain[i], time.time() + 600  # stay on it 10 min
+            else:
+                _MODEL_OVERRIDE["name"] = None  # configured model works again
+            print("LLM ok, model:", chain[i])
+            return data
+        if status == "fatal":
+            break
+        if status == "notfound" and not _MODEL_OVERRIDE["tried_discovery"]:
+            found = _discover_model(base, headers)
+            if found and found not in chain:
+                chain.insert(i + 1, found)
+        i += 1
+    _LLM_COOLDOWN["until"] = time.time() + 8
+    print("LLM failed on all models; using backend rules for 8s")
     return None
 
 

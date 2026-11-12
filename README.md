@@ -74,7 +74,7 @@ Every request runs through a five-step agent pipeline (`backend/agent.py`). The 
 | 1. Understand | **LLM** | Turns the buyer's words into a structured brief: category, quantity, budget, specs (e.g. "S to XL" → `["S","M","L","XL"]`) and priorities. If an essential detail is missing (business quantity), it **asks a follow-up question** instead of guessing. |
 | 2. Search | Backend rules | Filters the catalogue on specs, stock, minimum order quantity and budget, using integer cents. |
 | 3. Recover | Backend rules | If nothing fits, relaxes one constraint at a time and reports exactly what had to give ("Over budget by $349.00", "Only 150 units available"). |
-| 4. Rank | Backend rules | Documented weights. Individual: 60% price + 40% spec headroom. Business: 70% unit cost + 30% stock buffer. |
+| 4. Rank | Backend rules | Documented weights. Individual: 60% price + 40% spec headroom. Business: 85% unit cost + 15% stock buffer. |
 | 5. Advise | **LLM** | Explains why each option fits, the trade-off, names one **AI pick** and adds a procurement tip. |
 
 **Guardrails:** the model never supplies product IDs, prices, stock, totals or payment status. Every ID it returns is checked against the options the backend found, and unknown IDs are discarded. Checkout needs explicit approval, and only a server-verified PayPal capture marks an order paid. With no API key, a deterministic parser and rule-based explanations keep the demo usable.

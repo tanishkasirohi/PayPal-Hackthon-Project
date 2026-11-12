@@ -75,10 +75,18 @@ function renderResults(result){
   $('#product-grid').classList.toggle('hidden',result.recommendations.length===0);
   document.querySelectorAll('.add-button').forEach(b=>b.addEventListener('click',()=>openCart((b.dataset.list==='alt'?alts:result.recommendations)[Number(b.dataset.index)])));
 }
+function meter(label,pct,text,cls){return `<div class="meter"><div class="meter-top"><span>${label}</span><b>${text}</b></div><div class="bar"><i class="${cls}" style="width:${Math.max(4,Math.min(100,Math.round(pct)))}%"></i></div></div>`}
 function productCard(p,index,list='rec'){
   const attr=Object.entries(p.attributes||{}).filter(([,v])=>typeof v!=='object').slice(0,3).map(([k,v])=>`<span class="spec-pill">${esc(k.replaceAll('_',' '))}: ${esc(v)}</span>`).join('');
-  const total=p.line_total?money(p.line_total):money(Number(p.unit_price)*(state.requirements?.quantity||1));
-  return `<article class="product-card ${p.recommended?'picked':''}">${p.recommended?'<span class="pick-badge">✳ AI pick</span>':''}${p.relaxation?`<span class="relax-badge">${esc(p.relaxation)}</span>`:''}<div class="product-top"><span class="product-category">${esc(p.category)}</span><span class="product-price">${money(p.unit_price)} <small>/ unit</small></span></div><h3>${esc(p.name)}</h3><div class="product-desc">${esc(p.description)}</div>${p.why?`<div class="why">✓ ${esc(p.why)}</div>`:''}${p.tradeoff?`<div class="tradeoff">⚖ ${esc(p.tradeoff)}</div>`:''}${p.score!=null?`<div class="score">Backend score ${esc(p.score)}/100</div>`:''}<div class="product-specs">${attr}</div><div class="supplier-row"><span>${esc(p.supplier)}</span><span class="stock-ok">● ${Number(p.stock).toLocaleString()} in demo stock</span></div><div class="supplier-row" style="border-top:0;padding-top:7px"><span>Estimated total</span><strong>${total}</strong></div><button class="add-button" data-list="${list}" data-index="${index}">Add to ${state.mode==='business'?'purchase draft':'cart'} <span style="float:right">＋</span></button></article>`;
+  const totalNum=p.line_total?Number(p.line_total):Number(p.unit_price)*(state.requirements?.quantity||1);
+  const total=money(totalNum);
+  const budget=Number(state.requirements?.budget)||0;
+  const maxStock=Math.max(1,...[...(state.recommendations||[]),...(state.alternatives||[])].map(x=>Number(x.stock)||0));
+  const meters=[];
+  if(budget){const pct=totalNum/budget*100;meters.push(meter('Budget used',pct,`${Math.round(pct)}% of ${money(budget,state.requirements?.currency||'USD')}`,pct>100?'red':pct>85?'amber':''))}
+  if(p.score!=null){const sc=Number(p.score)||0;meters.push(meter('Match score',sc,`${esc(p.score)}/100`,sc<35?'amber':sc<60?'blue':'violet'))}
+  meters.push(meter('Stock level',(Number(p.stock)||0)/maxStock*100,`${Number(p.stock).toLocaleString()} units`,'blue'));
+  return `<article class="product-card ${p.recommended?'picked':''}" data-cat="${esc(String(p.category||'').toLowerCase())}">${p.recommended?'<span class="pick-badge">✳ AI pick</span>':''}${p.relaxation?`<span class="relax-badge">${esc(p.relaxation)}</span>`:''}<div class="product-top"><span class="product-category">${esc(p.category)}</span><span class="product-price">${money(p.unit_price)} <small>/ unit</small></span></div><h3>${esc(p.name)}</h3><div class="product-desc">${esc(p.description)}</div>${p.why?`<div class="why">✓ ${esc(p.why)}</div>`:''}${p.tradeoff?`<div class="tradeoff">⚖ ${esc(p.tradeoff)}</div>`:''}<div class="meters">${meters.join('')}</div><div class="product-specs">${attr}</div><div class="supplier-row"><span>${esc(p.supplier)}</span><span class="stock-ok">● in demo stock</span></div><div class="supplier-row" style="border-top:0;padding-top:7px"><span>Estimated total</span><strong>${total}</strong></div><button class="add-button" data-list="${list}" data-index="${index}">Add to ${state.mode==='business'?'purchase draft':'cart'} <span style="float:right">＋</span></button></article>`;
 }
 function openCart(product){
   state.selected={...product,quantity:Number(state.requirements?.quantity)||1};
