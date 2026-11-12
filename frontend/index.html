@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f5f4ef"><meta name="description" content="AI-assisted procurement for people and teams.">
+  <title>Procura AI — Buy with clarity</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/"><span class="brand-mark">p<span>·</span></span><span>procura<span class="brand-ai">AI</span></span></a>
+      <div class="workspace-label">WORKSPACE</div>
+      <button class="side-item active" data-view="procure"><span class="side-icon">✳</span> Procurement <span class="side-shortcut">⌘ 1</span></button>
+      <button class="side-item" data-view="orders"><span class="side-icon">▤</span> Orders <span class="side-shortcut" id="orders-count">0</span></button>
+      <div class="sidebar-bottom">
+        <div class="demo-note"><span class="live-dot"></span><div><strong>Demo catalogue</strong><small>Curated sample listings</small></div></div>
+        <div class="profile"><div class="avatar">P</div><div><strong>Procura workspace</strong><small>Sandbox mode</small></div><span class="more">···</span></div>
+      </div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="crumb">Procurement</strong></div><div class="top-actions"><span class="connection" id="ai-badge"><i></i> Connecting…</span><button class="help-button" title="About Procura AI">?</button></div></header>
+      <section id="procure-view" class="view">
+        <div class="hero"><div class="eyebrow"><span class="sparkle">✳</span> PROCUREMENT, MADE CLEAR</div><h1>What are you looking<br>to <em>find today?</em></h1><p>Tell us what you need. Procura compares real catalogue options, explains the trade-offs, and prepares a purchase for your approval.</p></div>
+        <div class="mode-switch" role="tablist"><button class="mode active" data-mode="individual"><span class="mode-icon">◉</span><span><b>For me</b><small>Personal shopping</small></span></button><button class="mode" data-mode="business"><span class="mode-icon">▦</span><span><b>For my business</b><small>Bulk & supplier sourcing</small></span></button></div>
+        <section class="composer-wrap"><label class="composer-label" for="request">DESCRIBE WHAT YOU NEED</label><div class="composer"><textarea id="request" rows="2" placeholder="e.g. A laptop for programming under $900, at least 16 GB RAM and 512 GB storage"></textarea><div class="composer-footer"><span><span class="ai-star">✳</span> AI turns your brief into a clear comparison</span><button id="find-button" class="primary-button">Find options <span>↗</span></button></div></div><div class="prompt-chips"><button data-prompt="Find me a laptop under $900 for programming, with at least 16 GB RAM and 512 GB storage.">Laptop for programming <span>↗</span></button><button data-prompt="Find 100 black cotton T-shirts in sizes S to XL within a total budget of $500.">100 black cotton T-shirts <span>↗</span></button></div></section>
+        <section id="result-section" class="results hidden"><div class="result-heading"><div><div class="eyebrow">YOUR PROCUREMENT BRIEF</div><h2 id="result-title">Options for your request</h2></div><button class="text-button" id="edit-request">↻ New search</button></div><div class="brief-card" id="brief-card"></div><div class="result-summary"><span id="result-count">0 options</span><span class="sort-label">Sorted by best value</span></div><div class="product-grid" id="product-grid"></div><div id="empty-state" class="empty-state hidden"><div>⌕</div><strong>No exact matches found</strong><p>Try relaxing one requirement, increasing your budget, or reducing the order quantity.</p></div></section>
+      </section>
+      <section id="orders-view" class="view hidden"><div class="page-head"><div class="eyebrow">YOUR ACTIVITY</div><h1>Orders</h1><p>Purchase drafts and completed Sandbox payments.</p></div><div id="orders-list" class="orders-list"></div></section>
+      <footer><span>Procura AI <span class="footer-dot">·</span> AI-assisted procurement</span><span>Catalogue, prices & inventory are demo data</span></footer>
+    </main>
+  </div>
+  <div class="overlay hidden" id="cart-overlay"><section class="cart-panel"><button class="close-button" id="close-cart">×</button><div class="eyebrow">REVIEW BEFORE CHECKOUT</div><h2 id="cart-title">Your purchase</h2><p class="panel-copy">Review the exact items and total. We’ll only open PayPal after you approve.</p><div id="cart-lines" class="cart-lines"></div><div class="cart-total"><span>Total <small id="cart-currency">USD</small></span><strong id="cart-total">$0.00</strong></div><label class="approval-check"><input id="approval" type="checkbox"><span>I approve these items and this total.</span></label><div id="paypal-buttons" class="paypal-buttons"></div><button id="paypal-start" class="paypal-button" disabled><span class="paypal-word">PayPal</span><span>Continue to secure checkout <b>→</b></span></button><p class="secure-note">🔒 Sandbox payment · Securely processed by PayPal</p><p id="pay-status" class="pay-status"></p></section></div>
+  <div class="toast" id="toast"></div>
+  <script src="/assets/app.js" defer></script>
+</body></html>
