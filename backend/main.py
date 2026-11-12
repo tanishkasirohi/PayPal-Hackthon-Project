@@ -69,7 +69,9 @@ def row_item(r):
     d = dict(r); d["attributes"] = json.loads(d.pop("attributes")); d["unit_price"] = f"{d.pop('unit_cents') / 100:.2f}"; d["currency"] = d.get("currency", CURRENCY); return d
 
 def paypal_configured():
-    return bool(os.getenv("PAYPAL_CLIENT_ID") and os.getenv("PAYPAL_CLIENT_SECRET"))
+    client_id=os.getenv("PAYPAL_CLIENT_ID", "").strip()
+    secret=os.getenv("PAYPAL_CLIENT_SECRET", "").strip()
+    return bool(client_id and secret and not client_id.lower().startswith("your_") and not secret.lower().startswith("your_"))
 
 def ai_configured():
     return bool(os.getenv("LLM_API_KEY"))
@@ -226,7 +228,7 @@ def paypal_request(path, data=None, token=None):
 
 def paypal_token():
     cid=os.getenv("PAYPAL_CLIENT_ID"); secret=os.getenv("PAYPAL_CLIENT_SECRET")
-    if not cid or not secret: raise HTTPException(503,"PayPal Sandbox is not configured. Add credentials to backend/.env.")
+    if not cid or not secret or cid.lower().startswith("your_") or secret.lower().startswith("your_"): raise HTTPException(503,"PayPal Sandbox is not configured. Add credentials to backend/.env.")
     url=os.getenv("PAYPAL_BASE_URL","https://api-m.sandbox.paypal.com").rstrip("/")+"/v1/oauth2/token"
     req=urllib.request.Request(url,data=urllib.parse.urlencode({"grant_type":"client_credentials"}).encode(),headers={"Authorization":"Basic "+__import__("base64").b64encode(f"{cid}:{secret}".encode()).decode(),"Content-Type":"application/x-www-form-urlencoded"},method="POST")
     try:
